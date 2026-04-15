@@ -321,7 +321,7 @@ Part (b) — Frequency of armature current at n = 300 r/min:
                   font=("Helvetica", 13, "bold")).grid(row=0, column=0, columnspan=3,
                                                         pady=10, padx=8, sticky="w")
 
-        def make_slider(row, label, var, lo, hi, resolution, fmt):
+        def make_slider(row, label, var, lo, hi, fmt):
             ttk.Label(frame, text=label, width=28, anchor="e").grid(
                 row=row, column=0, padx=8, pady=6, sticky="e")
             lbl_val = ttk.Label(frame, text=fmt.format(var.get()), width=12)
@@ -335,9 +335,9 @@ Part (b) — Frequency of armature current at n = 300 r/min:
             sl.grid(row=row, column=1, sticky="ew", padx=8)
             return sl
 
-        make_slider(1, "Supply voltage Vt [V]:",     self.var_vt,    1,   500,  1,    "{:.1f} V")
-        make_slider(2, "Armature resistance Ra [Ω]:", self.var_ra,   0.1,  20, 0.1,  "{:.2f} Ω")
-        make_slider(3, "No-load speed n₀ [r/min]:",  self.var_n0,  100, 5000,  10,  "{:.0f} rpm")
+        make_slider(1, "Supply voltage Vt [V]:",     self.var_vt,    1,   500, "{:.1f} V")
+        make_slider(2, "Armature resistance Ra [Ω]:", self.var_ra,   0.1,  20, "{:.2f} Ω")
+        make_slider(3, "No-load speed n₀ [r/min]:",  self.var_n0,  100, 5000, "{:.0f} rpm")
 
         # Poles combobox
         ttk.Label(frame, text="Number of poles:", width=28, anchor="e").grid(
@@ -1352,20 +1352,36 @@ Part (b) — Frequency of armature current at n = 300 r/min:
             fft_vals = np.abs(np.fft.rfft(i_wfm)) / N * 2
             freqs    = np.fft.rfftfreq(N, 1.0 / fs)
 
-            fund_idx = np.argmax(fft_vals[:int(N/4)])
-            fund_amp = fft_vals[fund_idx]
-            harm_amps = fft_vals[fund_idx*2:fund_idx*10:fund_idx] if fund_idx > 0 else fft_vals[:10]
+            # Locate fundamental bin by expected frequency f0 (not argmax, avoids DC errors)
+            df = fs / N  # FFT bin width [Hz]
+            fund_bin = max(1, int(round(f0 / df)))
+            fund_amp = fft_vals[fund_bin] if fund_bin < len(fft_vals) else 0.0
+
+            # Extract harmonic amplitudes at 3rd, 5th, 7th, 9th harmonics (frequency windows)
+            harm_amps = []
+            for h_order in [3, 5, 7, 9]:
+                h_bin = int(round(h_order * f0 / df))
+                if h_bin < len(fft_vals):
+                    # Peak within ±2 bins around expected harmonic
+                    lo_b = max(0, h_bin - 2)
+                    hi_b = min(len(fft_vals) - 1, h_bin + 2)
+                    harm_amps.append(float(np.max(fft_vals[lo_b:hi_b + 1])))
+
             THD = 0.0
             if fund_amp > 1e-9:
                 THD = math.sqrt(sum(h**2 for h in harm_amps)) / fund_amp * 100
 
-            # Power factor (simplified)
-            pf = fund_amp / math.sqrt(fund_amp**2 + sum(h**2 for h in harm_amps) + 1e-9)
+            # Displacement power factor: PF = I1_rms / I_total_rms
+            i_total_rms_sq = fund_amp**2 + sum(h**2 for h in harm_amps)
+            pf = fund_amp / math.sqrt(i_total_rms_sq + 1e-9)
 
             # Plots
             ax1, ax2 = self._ax10a, self._ax10b
             ax1.cla(); ax2.cla()
-            ax1.plot(t[:int(3/f0*fs)] * 1000, i_wfm[:int(3/f0*fs)], color="C0", linewidth=0.8)
+            # Protect against f0 = 0 before computing plot slice length
+            n_plot = int(3 / max(f0, 1e-6) * fs)
+            n_plot = min(n_plot, len(t))
+            ax1.plot(t[:n_plot] * 1000, i_wfm[:n_plot], color="C0", linewidth=0.8)
             ax1.set_ylabel("Ia (A)")
             ax1.set_xlabel("Time (ms)")
             ax1.set_title("Armature Current Waveform (3 cycles)")
@@ -1614,7 +1630,7 @@ Part (b) — Frequency of armature current at n = 300 r/min:
             ax1.bar(x - w/2, exp_vals,  w, label="Expected", color="C0", alpha=0.8)
             ax1.bar(x + w/2, calc_vals, w, label="Calculated", color="C3", alpha=0.8)
             ax1.set_xticks(x)
-            ax1.set_xticklabels(short, rotation=40, ha="right", fontsize=7)
+            ax1.set_xticklabels(short, rotation=40, ha="right", fontsize=8)
             ax1.set_title("Expected vs Calculated")
             ax1.legend(fontsize=8)
             ax1.grid(True, axis="y", alpha=0.4)
@@ -1624,7 +1640,7 @@ Part (b) — Frequency of armature current at n = 300 r/min:
             ax2.axhline(tol * 100, color="k", linestyle="--",
                         label=f"Tol={tol*100:.2f}%")
             ax2.set_xticks(x)
-            ax2.set_xticklabels(short, rotation=40, ha="right", fontsize=7)
+            ax2.set_xticklabels(short, rotation=40, ha="right", fontsize=8)
             ax2.set_title("Percentage Error")
             ax2.set_ylabel("Error (%)")
             ax2.legend(fontsize=8)
